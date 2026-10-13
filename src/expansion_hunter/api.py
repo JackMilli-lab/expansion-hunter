@@ -35,17 +35,23 @@ def create_app(settings: Settings | None = None, *, discovery_service_factory=No
 
         def start_signal_workers(config, *, notifications):
             from .notification_runtime import run_notification_worker
-            from .pre_ignition_research import run_pre_ignition_research_worker
             from .pre_move_runtime import run_pre_move_deep_worker
-            from .trade_alert_research import run_trade_alert_research_worker
             from .trade_alert_runtime import run_trade_alert_worker
 
             workers = {
                 "trade_alert_task": run_trade_alert_worker(app, config),
-                "trade_alert_research_task": run_trade_alert_research_worker(app, config),
                 "pre_move_deep_task": run_pre_move_deep_worker(app, config),
-                "pre_ignition_research_task": run_pre_ignition_research_worker(app, config),
             }
+            if os.getenv("COCKPIT_RESEARCH_ENABLED", "true").strip().lower() not in {"false", "0", "no"}:
+                from .pre_ignition_research import run_pre_ignition_research_worker
+                from .trade_alert_research import run_trade_alert_research_worker
+
+                workers["trade_alert_research_task"] = run_trade_alert_research_worker(app, config)
+                workers["pre_ignition_research_task"] = run_pre_ignition_research_worker(app, config)
+            else:
+                for name in ("trade_alert_research_health", "pre_ignition_research_health"):
+                    setattr(app.state, name, {"status": "DISABLED", "execution_enabled": False,
+                        "reason": "Offline research disabled by COCKPIT_RESEARCH_ENABLED"})
             if notifications:
                 workers["notification_task"] = run_notification_worker(app)
             tasks = []

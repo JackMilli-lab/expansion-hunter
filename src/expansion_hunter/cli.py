@@ -395,6 +395,14 @@ def main():
                     if config is not None:
                         config.max_assets = min(config.max_assets, limit)
                         config.deep_watch_limit = min(config.deep_watch_limit, limit)
+            deep_limit = os.getenv("COCKPIT_DEEP_WATCH_LIMIT")
+            if deep_limit:
+                limit = int(deep_limit)
+                if not 0 <= limit <= 50:
+                    raise ValueError("COCKPIT_DEEP_WATCH_LIMIT must be between 0 and 50")
+                for config in (alert_config, pre_ignition_config):
+                    if config is not None:
+                        config.deep_watch_limit = min(limit, config.max_assets)
             uvicorn.run(
                 create_app(settings, trade_alert_settings=alert_config, pre_ignition_settings=pre_ignition_config),
                 host=args.host, port=args.port, log_level=args.log_level.lower(),

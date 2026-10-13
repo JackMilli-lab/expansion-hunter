@@ -69,6 +69,9 @@ async def run_pre_move_deep_worker(app, config):
             if worker:
                 # Published copies are independent of the fast evaluation thread.
                 selected = select_deep_candidates(worker.snapshot(), config.deep_watch_limit)
+                for symbol in (app.state.pre_move_analysis.keys() | last_revision.keys()) - selected.keys():
+                    app.state.pre_move_analysis.pop(symbol, None)
+                    last_revision.pop(symbol, None)
                 for symbol, row in selected.items():
                     try:
                         snapshot = chart_snapshot(worker.assets[symbol], worker._state(symbol), now)

@@ -1,13 +1,19 @@
 """Read-only Trade Alert dashboard/API. Test delivery requires explicit action."""
 import os
 from datetime import date as utc_date
+from datetime import datetime
 from importlib.resources import files
 
 from fastapi import Depends, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 
 def install_trade_alert_routes(app, authorize):
+    from .native_chart import NativeChartService
+
+    charts = NativeChartService()
+    app.state.native_chart_service = charts
+
     def public_market_enabled():
         return os.getenv("COCKPIT_PUBLIC_MARKET_DATA", "false").strip().lower() in {"true", "1", "yes"}
 
@@ -69,14 +75,17 @@ def install_trade_alert_routes(app, authorize):
             raise HTTPException(404, "Not a currently covered native market")
         now = utcnow()
         analysis = getattr(app.state, "pre_move_analysis", {}).get(symbol)
+        bars = worker._history(symbol, timeframe, now)
+        fibonacci = await charts.fibonacci(worker, symbol, timeframe, bars, now)
         return {"symbol": symbol, "as_of": now.isoformat(), "timeframe": timeframe,
                 "market": worker._state(symbol).snapshot(symbol, now, include_history=False),
-                "candles": [bar.model_dump(mode="json") for bar in worker._history(symbol, timeframe, now)],
+                "candles": [bar.model_dump(mode="json") for bar in bars],
                 "pre_move": [row for row in worker.snapshot().get("pre_move", []) if row["symbol"] == symbol],
                 "pre_ignition": [row for row in worker.snapshot().get("pre_ignition", [])
                                  if row["symbol"] == symbol],
                 "analysis": analysis,
                 "analysis_status": "DERIVED" if analysis else "UNAVAILABLE",
+                **fibonacci,
                 "warning": "Conditional paths are hypotheses, not predicted future candles"}
 
     @app.get("/api/market/status", dependencies=[Depends(market_read_access)])
@@ -96,12 +105,41 @@ def install_trade_alert_routes(app, authorize):
 
     @app.get("/api/market/assets/{symbol}", dependencies=[Depends(market_read_access)])
     async def market_asset(symbol: str, timeframe: str = "5m"):
-        # Reuse native rolling candles; this request never downloads histories.
+        # Reuse native rolling candles and a cached own-timeframe projection.
         snapshot = await asset(symbol, timeframe)
         visible = {key: snapshot[key] for key in
-                   ("symbol", "as_of", "timeframe", "market", "candles", "analysis", "analysis_status", "warning")}
+                   ("symbol", "as_of", "timeframe", "market", "candles", "analysis", "analysis_status",
+                    "active_fibonacci", "fibonacci_as_of", "warning")}
         visible["public_market_data"] = public_market_enabled()
         return visible
+
+    async def native_history(symbol: str, timeframe: str, before: datetime | None, limit: int):
+        from .models import aware, utcnow
+        from .trade_alert_runtime import FRAMES
+
+        if timeframe not in FRAMES:
+            raise HTTPException(422, "Unsupported timeframe")
+        if not 1 <= limit <= 1000:
+            raise HTTPException(422, "limit must be between 1 and 1000")
+        if before is not None:
+            try:
+                before = aware(before)
+            except ValueError as exc:
+                raise HTTPException(422, "before must be an ISO timestamp with a timezone") from exc
+        symbol = symbol.upper()
+        worker = getattr(app.state, "trade_alert_worker", None)
+        if worker is None or symbol not in worker.assets:
+            raise HTTPException(404, "Not a currently covered native market")
+        payload, code = await charts.history(worker, symbol, timeframe, before, limit, utcnow())
+        return JSONResponse(payload, status_code=code)
+
+    @app.get("/api/trade-alert/assets/{symbol}/history", dependencies=[Depends(authorize)])
+    async def asset_history(symbol: str, timeframe: str = "5m", before: datetime | None = None, limit: int = 500):
+        return await native_history(symbol, timeframe, before, limit)
+
+    @app.get("/api/market/assets/{symbol}/history", dependencies=[Depends(market_read_access)])
+    async def market_asset_history(symbol: str, timeframe: str = "5m", before: datetime | None = None, limit: int = 500):
+        return await native_history(symbol, timeframe, before, limit)
 
     @app.get("/api/trade-alert/history", dependencies=[Depends(authorize)])
     def history(limit: int = 100):

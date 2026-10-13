@@ -20,7 +20,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="Node required for executable frontend tests")
 
 
-def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None, action="", inputs=None, universe=None, universe_next=None, stream=False, updates=None, hydrated_live=None):
+def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None, action="", inputs=None, universe=None, universe_next=None, stream=False, updates=None, hydrated_live=None, extra_routes=None, history_pages=None):
     now = datetime.now(UTC).isoformat()
     routes = {
         "/api/i18n/en": json.loads(CATALOG.read_text()),
@@ -43,10 +43,13 @@ def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None
     }
     if universe is not None:
         routes['/api/live/universe'] = universe
+    routes.update(extra_routes or {})
     script = HTML.read_text().split("<script>", 1)[1].split("</script>", 1)[0]
     # Test-only read access to the real closed-over cache, never exposed in production.
     script = script.replace("window.addEventListener('eh-desktop-session'",
-                            "window.__readLiveCache=()=>S.live;\nwindow.addEventListener('eh-desktop-session'", 1)
+                            "window.__readLiveCache=()=>S.live;\n"
+                            "window.__readChartHistory=()=>S.chartHistory instanceof Map?Object.fromEntries(S.chartHistory):S.chartHistory;\n"
+                            "window.addEventListener('eh-desktop-session'", 1)
     defaults = {"calc-mode": "TRADE", "calc-side": "LONG", "calc-entry": "100", "calc-stop": "90",
         "calc-target": "120", "calc-amount": "100", "calc-account": "1000", "calc-leverage": "1",
         "calc-entry-fee": "0.04", "calc-exit-fee": "0.04", "calc-funding": "", "paper-notes": "test only"}
@@ -54,9 +57,10 @@ def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None
     harness = r"""
 const vm=require('node:vm');
 const elements=new Map(),handlers=new Map(),requests=[],intervals=[];
-let resolveCalculation,clockOffset=0,updateIndex=0,fullReads=0;
+let resolveCalculation,resolveHistory,clockOffset=0,updateIndex=0,historyIndex=0,fullReads=0,beforeHistory=null;
 class TestDate extends Date {static now(){return Date.now()+clockOffset}}
 const delayedCalculation=new Promise(resolve=>{resolveCalculation=resolve});
+const delayedHistory=new Promise(resolve=>{resolveHistory=resolve});
 function element(id){if(!elements.has(id))elements.set(id,{
  textContent:'',innerHTML:'',className:'',dataset:{},style:{},value:defaults[id]??'',
  disabled:id==='paper-save',clientWidth:700,clientHeight:350,attributes:{},htmlWrites:0,
@@ -77,6 +81,12 @@ const context={console,Date:TestDate,Math,String,Number,Set,Map,Infinity,AbortCo
  fetch:async(path,options={})=>{
   const method=options.method??'GET',body=options.body?JSON.parse(options.body):null;
   requests.push({path,method,body});
+  if(path.split('?')[0].endsWith('/assets/BTCUSDT/history')){
+   const fixture=historyPages?.[Math.min(historyIndex++,historyPages.length-1)];
+   if(action==='history-race')await delayedHistory;
+   const status=fixture?.http_status??(fixture?200:404);
+   return {ok:status===200,status,json:async()=>fixture??{detail:'Missing native history fixture'}};
+  }
   if(path==='/api/live/assets/BTCUSDT'){fullReads++;if(Number(defaults['first-full-failure'])&&fullReads===1)return {ok:false,status:Number(defaults['first-full-failure']),json:async()=>({detail:'Native history warming'})};if(fullHydration&&fullReads>1)return {ok:true,status:200,json:async()=>fullHydration};}
   if(path.startsWith('/api/live/updates/')){
    const fixture=incrementalUpdates?.[Math.min(updateIndex++,incrementalUpdates.length-1)]??routes[path.split('?')[0]];
@@ -126,7 +136,30 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve))}
   for(let n=0;n<Number(defaults['update-count']??1);n++){clockOffset+=Number(defaults['advance-clock-seconds']??0)*1000;intervals[0]();for(let wait=0;wait<6;wait++)await tick();}
  }
  if(action==='pro')handlers.get('experience-mode:click')({target:{closest:()=>({dataset:{mode:'pro'}})}});
- if(action==='frame')handlers.get('timeframes:click')({target:{closest:()=>({dataset:{frame:defaults['selected-frame']??'5m'}})}});
+ if(action==='frame'){handlers.get('timeframes:click')({target:{closest:()=>({dataset:{frame:defaults['selected-frame']??'5m'}})}});for(let n=0;n<6;n++)await tick();}
+ if(['history-pan','history-zoom','history-race','history-cap','history-cap-reset'].includes(action)){
+  if(action==='history-zoom'){
+   for(let n=0;n<Number(defaults['zoom-count']??16);n++){handlers.get('chart-zoom-out:click')({});for(let wait=0;wait<6;wait++)await tick();}
+  }else{
+   const pointer=(x)=>({pointerId:1,clientX:x,clientY:150,pointerType:'mouse',button:0,preventDefault(){}});
+   const pan=()=>{handlers.get('chart:pointerdown')(pointer(300));handlers.get('chart:pointermove')(pointer(999999));handlers.get('chart:pointerup')(pointer(999999));};
+   pan();
+   beforeHistory={chart:{...element('chart').dataset},price:element('coin-price').textContent};
+   if(action==='history-race'){
+    for(let n=0;n<6;n++)await tick();
+    handlers.get('timeframes:click')({target:{closest:()=>({dataset:{frame:'5m'}})}});
+    for(let n=0;n<6;n++)await tick();
+    resolveHistory();
+   }
+   if(action.startsWith('history-cap')){
+    for(let n=1;n<Number(defaults['history-pan-count']??21);n++){for(let wait=0;wait<6;wait++)await tick();pan();}
+    for(let n=0;n<6;n++)await tick();
+    intervals[0]();for(let n=0;n<6;n++)await tick();
+    if(action==='history-cap-reset'){handlers.get('reset-chart:click')({});for(let n=0;n<6;n++)await tick();}
+   }
+  }
+  for(let n=0;n<12;n++)await tick();
+ }
  if(['pan','pan-reset','pan-boundary','pinch','vertical-scroll','crosshair','wheel','zoom-buttons','pan-new-bar','pan-frame'].includes(action)){
   const pointer=(id,x,y,type='mouse')=>({pointerId:id,clientX:x,clientY:y,pointerType:type,button:0,preventDefault(){}});
   if(['pan','pan-reset','pan-boundary','pan-new-bar','pan-frame'].includes(action)){
@@ -165,12 +198,13 @@ async function tick(){await new Promise(resolve=>setImmediate(resolve))}
  }
  const values={};for(const[id,item]of elements)values[id]={text:item.textContent,html:item.innerHTML,disabled:item.disabled,dataset:item.dataset,attributes:item.attributes,style:item.style,htmlWrites:item.htmlWrites,htmlBeforeUpdate:item.htmlBeforeUpdate};
  const candleState=routes['/api/live/assets/BTCUSDT']?.live,closed=candleState?.closed_candles?.['1m'];
- const cachedLive=['incremental','frame'].includes(action)?JSON.parse(JSON.stringify(context.window.__readLiveCache())):null;
- process.stdout.write(JSON.stringify({values,requests,cachedLive,nativeCandleState:{price:candleState?.price,count:closed?.length,last:closed?.at(-1)}}));
+ const cachedLive=JSON.parse(JSON.stringify(context.window.__readLiveCache()));
+ const chartHistory=context.window.__readChartHistory();
+ process.stdout.write(JSON.stringify({values,requests,cachedLive,chartHistory,beforeHistory,nativeCandleState:{price:candleState?.price,count:closed?.length,last:closed?.at(-1)}}));
 })().catch(error=>{console.error(error);process.exitCode=1});
 """
     program = ("const script=" + json.dumps(script) + ";const routes=" + json.dumps(routes)
-        + ";const nextUniverse="+json.dumps(universe_next)+";const stream="+json.dumps(stream)+";const incrementalUpdates="+json.dumps(updates)+";const fullHydration="+json.dumps(hydrated_live)+";const defaults=" + json.dumps(defaults) + ";const action=" + json.dumps(action) + ";" + harness)
+        + ";const nextUniverse="+json.dumps(universe_next)+";const stream="+json.dumps(stream)+";const incrementalUpdates="+json.dumps(updates)+";const fullHydration="+json.dumps(hydrated_live)+";const historyPages="+json.dumps(history_pages)+";const defaults=" + json.dumps(defaults) + ";const action=" + json.dumps(action) + ";" + harness)
     target = tmp_path / "war-room-ui.js"
     target.write_text(program)
     completed = subprocess.run([NODE, str(target)], capture_output=True, text=True, timeout=10, check=True)
@@ -417,6 +451,10 @@ def test_drag_pan_uses_received_history_and_is_bounded(tmp_path):
     assert chart['offset'] == '20' and chart['visibleCount'] == '100'
     assert chart['firstTimestamp'] == live['live']['closed_candles']['1m'][80]['open_time']
     assert chart['lastTimestamp'] == live['live']['closed_candles']['1m'][179]['open_time']
+    note = output['values']['chart-window-note']['text']
+    assert 'History' in note and ' – ' in note
+    assert str(datetime.fromisoformat(chart['firstTimestamp']).year) in note
+    assert str(datetime.fromisoformat(chart['lastTimestamp']).year) in note
     oldest = run_ui(tmp_path, live=live, action='pan-boundary')['values']['chart']['dataset']
     assert oldest['offset'] == '100'
     assert oldest['firstTimestamp'] == live['live']['closed_candles']['1m'][0]['open_time']
@@ -906,3 +944,327 @@ def test_contiguous_exclusive_close_boundary_does_not_request_backfill(tmp_path)
                     inputs={'update-count': 4, 'advance-clock-seconds': 5})
     assert 'backfill pending' not in output['values']['chart-feed-caption']['text']
     assert sum(request['path'] == '/api/live/assets/BTCUSDT' for request in output['requests']) == 1
+
+
+def paginated_history_fixture():
+    """An explicit archived page preceding a separate 240-bar live cache."""
+    from datetime import timedelta
+
+    live = incremental_live_fixture()
+    first = live['live']['closed_candles']['1m'][0]
+    first_at = datetime.fromisoformat(first['open_time'])
+    recent = [dict(first, open_time=(first_at-timedelta(minutes=40-index)).isoformat())
+              for index in range(40)]
+    live['live']['closed_candles']['1m'] = recent+live['live']['closed_candles']['1m']
+    oldest_at = datetime.fromisoformat(recent[0]['open_time'])
+    older = [dict(first, open_time=(oldest_at-timedelta(minutes=500-index)).isoformat())
+             for index in range(500)]
+    page = {'symbol': 'BTCUSDT', 'timeframe': '1m', 'status': 'AVAILABLE',
+            'as_of': live['live']['received_timestamp'], 'candles': older,
+            'has_more': False, 'next_before': older[0]['open_time']}
+    return live, page
+
+
+def history_requests(output):
+    return [request['path'] for request in output['requests']
+            if request['path'].split('?')[0].endswith('/assets/BTCUSDT/history')]
+
+
+def cached_chart_history(output, frame='1m'):
+    """Read the test-only archive state without imposing its storage layout."""
+    history = output['chartHistory']
+    if isinstance(history, dict):
+        entry = history.get('BTCUSDT:'+frame, history.get(frame))
+        if entry is None and isinstance(history.get('BTCUSDT'), dict):
+            entry = history['BTCUSDT'].get(frame)
+    else:
+        entry = None
+    if isinstance(entry, list):
+        return entry
+    assert isinstance(entry, dict), history
+    return entry.get('candles', entry.get('bars', []))
+
+
+def test_native_history_page_preserves_viewport_quote_and_bounded_live_cache(tmp_path):
+    from urllib.parse import parse_qs, urlsplit
+
+    live, page = paginated_history_fixture()
+    output = run_ui(tmp_path, live=live, action='history-pan', history_pages=[page])
+    requests = history_requests(output)
+    assert len(requests) == 1
+    query = parse_qs(urlsplit(requests[0]).query)
+    assert query['timeframe'] == ['1m']
+    assert query['before'] == [live['live']['closed_candles']['1m'][0]['open_time']]
+    archive = cached_chart_history(output)
+    assert archive == page['candles']+live['live']['closed_candles']['1m']
+    assert len(archive) == 740
+    chart = output['values']['chart']['dataset']
+    assert chart['firstTimestamp'] == output['beforeHistory']['chart']['firstTimestamp']
+    assert chart['lastTimestamp'] == output['beforeHistory']['chart']['lastTimestamp']
+    assert output['values']['coin-price']['text'] == output['beforeHistory']['price'] == '102.49'
+    assert output['cachedLive']['live'] == live['live']
+    assert len(output['cachedLive']['live']['closed_candles']['1m']) == 240
+
+
+def test_zoom_out_loads_native_archive_and_can_show_more_than_240_received_candles(tmp_path):
+    live, page = paginated_history_fixture()
+    output = run_ui(tmp_path, live=live, action='history-zoom', history_pages=[page])
+    chart = output['values']['chart']['dataset']
+    assert int(chart['window']) > 240 and int(chart['visibleCount']) > 240
+    assert chart['lastTimestamp'] == live['live']['closed_candles']['1m'][-1]['open_time']
+    assert len(cached_chart_history(output)) == 740
+    assert len(history_requests(output)) == 1
+    assert len(output['cachedLive']['live']['closed_candles']['1m']) == 240
+    assert output['values']['coin-price']['text'] == '102.49'
+
+
+def test_native_history_page_rejects_conflicts_future_bars_and_invalid_ohlc(tmp_path):
+    from datetime import timedelta
+
+    live, page = paginated_history_fixture()
+    supplied = page['candles'][:3]
+    conflicting = dict(live['live']['closed_candles']['1m'][0], close=99.25)
+    future = dict(supplied[0], open_time=(datetime.now(UTC)+timedelta(minutes=5)).isoformat())
+    invalid = dict(supplied[0], open=200, high=100)
+    page['candles'] = supplied+[conflicting, future, invalid]
+    output = run_ui(tmp_path, live=live, action='history-pan', history_pages=[page])
+    archive = cached_chart_history(output)
+    assert archive == live['live']['closed_candles']['1m']
+    assert future not in archive and invalid not in archive and conflicting not in archive
+    assert output['cachedLive']['live'] == live['live']
+    assert output['values']['coin-price']['text'] == '102.49'
+    assert 'rejected' in output['values']['chart-window-note']['text'].lower()
+
+
+def test_native_history_page_response_after_timeframe_switch_cannot_replace_selected_frame(tmp_path):
+    live, page = paginated_history_fixture()
+    delta = incremental_delta(live, new_closed=False, new_open=False)
+    delta['live']['closed_candles'] = {'5m': list(live['live']['closed_candles']['5m'])}
+    output = run_ui(tmp_path, live=live, action='history-race', history_pages=[page], updates=[delta])
+    assert len(history_requests(output)) == 1
+    chart = output['values']['chart']['dataset']
+    assert chart['offset'] == '0' and chart['visibleCount'] == '1'
+    assert chart['firstTimestamp'] == live['live']['closed_candles']['5m'][0]['open_time']
+    assert output['cachedLive']['live']['closed_candles'] == live['live']['closed_candles']
+    assert output['values']['coin-price']['text'] == '103.50'
+
+
+def active_fib_fixture(frame, status='AVAILABLE', **changes):
+    view = {'timeframe': frame, 'status': status, 'quality': 'DERIVED',
+            'levels': [{'timeframe': frame, 'ratio': .618, 'price': 100.2}],
+            'golden_pocket': {'timeframe': frame, 'lower_price': 99.8, 'upper_price': 100.1},
+            'evaluated_at': datetime.now(UTC).isoformat()}
+    return {**view, **changes}
+
+
+@pytest.mark.parametrize('status', ['INSUFFICIENT_DATA', 'NO_SWING', 'DISABLED', 'STALE', 'UNAVAILABLE'])
+def test_selected_frame_fib_status_is_visible_without_legacy_levels_or_golden_pocket(tmp_path, status):
+    live = incremental_live_fixture()
+    live['live']['active_fibonacci'] = {'1m': active_fib_fixture('1m', status)}
+    live['live']['overlays'] = [{'kind': 'FIBONACCI', 'timeframe': '1m', 'ratio': .382, 'price': 100.6}]
+    live['live']['fibonacci'] = {'golden_pockets': [{'timeframe': '1m', 'lower': 99.8, 'upper': 100.1}]}
+    output = run_ui(tmp_path, live=live)
+    assert output['values']['chart-fib-status']['text'] == '1m Fib · '+status
+    chart = output['values']['chart']['html']
+    assert '1m Fib 0.618' not in chart and 'Fib 0.382' not in chart and 'Golden Pocket' not in chart
+
+
+def test_missing_selected_frame_fib_is_unavailable_and_cannot_reuse_other_frame(tmp_path):
+    live = incremental_live_fixture()
+    live['live']['active_fibonacci'] = {'5m': active_fib_fixture('5m')}
+    live['live']['overlays'] = [{'kind': 'FIBONACCI', 'timeframe': '1m', 'ratio': .382, 'price': 100.6}]
+    live['live']['fibonacci'] = {'golden_pockets': [{'timeframe': '1m', 'lower': 99.8, 'upper': 100.1}]}
+    output = run_ui(tmp_path, live=live)
+    assert output['values']['chart-fib-status']['text'] == '1m Fib · UNAVAILABLE'
+    chart = output['values']['chart']['html']
+    assert '5m Fib' not in chart and 'Fib 0.382' not in chart and 'Golden Pocket' not in chart
+
+
+def test_stale_fib_quality_suppresses_its_levels_and_golden_pocket(tmp_path):
+    live = incremental_live_fixture()
+    live['live']['active_fibonacci'] = {'1m': active_fib_fixture('1m', quality='STALE')}
+    output = run_ui(tmp_path, live=live)
+    assert 'STALE' in output['values']['chart-fib-status']['text']
+    assert '1m Fib 0.618' not in output['values']['chart']['html']
+    assert 'Golden Pocket' not in output['values']['chart']['html']
+
+
+def test_incremental_fib_cache_merges_frames_and_survives_later_omission(tmp_path):
+    from datetime import timedelta
+
+    live = incremental_live_fixture()
+    old_at = datetime.now(UTC)-timedelta(seconds=5)
+    live['live']['active_fibonacci'] = {
+        '1m': active_fib_fixture('1m', 'INSUFFICIENT_DATA', evaluated_at=old_at.isoformat()),
+        '5m': active_fib_fixture('5m', 'NO_SWING', evaluated_at=old_at.isoformat()),
+    }
+    delta = incremental_delta(live)
+    current = active_fib_fixture('1m', evaluated_at=datetime.now(UTC).isoformat())
+    delta['live']['active_fibonacci'] = {'1m': current}
+    omitted = incremental_delta(live)
+    output = run_ui(tmp_path, live=live, action='incremental', updates=[delta, omitted],
+                    inputs={'update-count': 2})
+    assert output['cachedLive']['live']['active_fibonacci'] == {
+        '1m': current, '5m': live['live']['active_fibonacci']['5m'],
+    }
+    assert output['values']['chart-fib-status']['text'] == '1m Fib · AVAILABLE'
+
+
+def test_incremental_fib_version_is_guarded_per_frame_independent_of_shared_analysis_at(tmp_path):
+    from datetime import timedelta
+
+    live = incremental_live_fixture()
+    newer = datetime.now(UTC)-timedelta(seconds=2)
+    older = newer-timedelta(seconds=10)
+    retained = active_fib_fixture('1m', evaluated_at=newer.isoformat())
+    live['live']['active_fibonacci'] = {'1m': retained}
+    delta = incremental_delta(live)
+    delta['live']['analysis_at'] = datetime.now(UTC).isoformat()
+    delta['live']['active_fibonacci'] = {'1m': active_fib_fixture('1m', 'NO_SWING', evaluated_at=older.isoformat())}
+    output = run_ui(tmp_path, live=live, action='incremental', updates=[delta])
+    assert output['cachedLive']['live']['active_fibonacci']['1m'] == retained
+    assert output['values']['chart-fib-status']['text'] == '1m Fib · AVAILABLE'
+
+
+def test_public_native_fib_payload_overrides_shared_analysis_and_caches_each_selected_frame(tmp_path):
+    from test_cockpit_browser import public_native_fixtures, run_cockpit
+
+    _, routes = public_native_fixtures()
+    views = {'1m': active_fib_fixture('1m'), '5m': active_fib_fixture('5m', 'INSUFFICIENT_DATA')}
+    for frame, view in views.items():
+        payload = routes[f'/api/market/assets/BTCUSDT?timeframe={frame}']
+        payload['active_fibonacci'] = {frame: view}
+        # A shared cached research result must not mask the frame-specific view.
+        payload['analysis']['active_fibonacci'] = {'1m': active_fib_fixture('1m', 'NO_SWING')}
+    output = run_cockpit(tmp_path, {'assets': [], 'watchlist': []}, {'feed_fresh': False},
+                         extra_routes=routes, required_token='fixture-private-access-code',
+                         actions=[{'type': 'frame', 'frame': frame} for frame in ['1m', '5m', '1m']],
+                         capture_contract=True)
+    for frame, snapshot in zip(['1m', '1m', '5m', '1m'], output['snapshots'], strict=True):
+        assert snapshot['values']['chart-fib-status']['text'] == frame+' Fib · '+views[frame]['status']
+        assert snapshot['state']['live']['live']['active_fibonacci'][frame] == views[frame]
+    cache = output['state']['live']['live']['active_fibonacci']
+    assert cache['1m'] == views['1m'] and cache['5m'] == views['5m']
+
+
+def test_latest_fib_does_not_appear_as_known_inside_an_older_chart_viewport(tmp_path):
+    from datetime import timedelta
+
+    live = incremental_live_fixture()
+    latest = live['live']['closed_candles']['1m'][-1]
+    source_at = (datetime.fromisoformat(latest['open_time'])+timedelta(minutes=1)).isoformat()
+    live['live']['active_fibonacci'] = {'1m': active_fib_fixture('1m', source_timestamp=source_at)}
+    panned = run_ui(tmp_path, live=live, action='pan')
+    assert '1m Fib 0.618' not in panned['values']['chart']['html']
+    assert 'Golden Pocket' not in panned['values']['chart']['html']
+    assert 'history' in panned['values']['chart-fib-status']['text'].lower()
+    latest_view = run_ui(tmp_path, live=live, action='pan-reset')
+    assert latest_view['values']['chart-fib-status']['text'] == '1m Fib · AVAILABLE'
+    assert '1m Fib 0.618' in latest_view['values']['chart']['html']
+
+
+@pytest.mark.parametrize('reset', [False, True])
+def test_history_cap_keeps_a_continuous_older_archive_until_reset_returns_to_live(tmp_path, reset):
+    from datetime import timedelta
+
+    live, first_page = paginated_history_fixture()
+    first = first_page['candles'][0]
+    before = datetime.fromisoformat(live['live']['closed_candles']['1m'][0]['open_time'])
+    older = [dict(first, open_time=(before-timedelta(minutes=10500-index)).isoformat())
+             for index in range(10500)]
+    pages = []
+    for index in range(21):
+        end = len(older)-500*index
+        candles = older[end-500:end]
+        pages.append({**first_page, 'candles': candles, 'has_more': index < 20,
+                      'next_before': candles[0]['open_time']})
+    delta = incremental_delta(live)
+    action = 'history-cap-reset' if reset else 'history-cap'
+    output = run_ui(tmp_path, live=live, action=action, history_pages=pages, updates=[delta])
+    assert len(history_requests(output)) == 21
+    archive = cached_chart_history(output)
+    hot = output['cachedLive']['live']['closed_candles']['1m']
+    assert len(hot) == 240 and hot[-1] == delta['live']['closed_candles']['1m'][-1]
+    assert output['values']['coin-price']['text'] == '103.50'
+    if reset:
+        assert archive == hot
+        chart = output['values']['chart']['dataset']
+        assert chart['offset'] == '0'
+        assert chart['lastTimestamp'] == delta['live']['open_candles']['1m']['open_time']
+        assert output['values']['chart-window-note']['text'] == 'Latest candles'
+    else:
+        assert archive == older[:10000]
+        assert all(datetime.fromisoformat(right['open_time'])-datetime.fromisoformat(left['open_time']) == timedelta(minutes=1)
+                   for left, right in zip(archive, archive[1:]))
+        assert delta['live']['closed_candles']['1m'][-1] not in archive
+        assert output['values']['chart']['dataset']['lastTimestamp'] <= archive[-1]['open_time']
+
+
+def test_native_timeframe_switch_can_progress_while_previous_frame_request_is_pending(tmp_path):
+    from datetime import timedelta
+
+    from test_cockpit_browser import public_native_fixtures, run_cockpit
+
+    _, routes = public_native_fixtures()
+    delayed_path = '/api/market/assets/BTCUSDT?timeframe=5m'
+    delayed = routes[delayed_path]
+    delayed['market']['price'] = 990
+    delayed['active_fibonacci'] = {'5m': active_fib_fixture('5m')}
+    routes[delayed_path] = {'__status': 200, '__body': delayed, '__delay_ms': 90}
+    selected_path = '/api/market/assets/BTCUSDT?timeframe=15m'
+    selected = routes[selected_path]
+    selected['market']['price'] = 103.5
+    selected['active_fibonacci'] = {'15m': active_fib_fixture('15m', 'NO_SWING')}
+    # Both detailed observations are newer than the broad native status row.
+    received = datetime.now(UTC).isoformat()
+    previous = (datetime.fromisoformat(received)-timedelta(seconds=1)).isoformat()
+    for row in routes['/api/market/status']['assets']:
+        if row['symbol'] == 'BTCUSDT':
+            row['received_at'] = previous
+            row['price_evidence']['exchange_timestamp'] = previous
+    initial = routes['/api/market/assets/BTCUSDT?timeframe=1m']
+    for key in ['price_source_timestamp', 'price_received_timestamp', 'last_received_timestamp']:
+        initial['market'][key] = previous
+    for detail in [delayed, selected]:
+        for key in ['price_source_timestamp', 'price_received_timestamp', 'last_received_timestamp']:
+            detail['market'][key] = received
+    output = run_cockpit(tmp_path, {'assets': [], 'watchlist': []}, {'feed_fresh': False},
+                         extra_routes=routes, required_token='fixture-private-access-code',
+                         actions=[{'type': 'frame', 'frame': frame} for frame in ['5m', '15m', '15m']],
+                         capture_contract=True)
+    events = output['events']
+    new_fetch = next(index for index, event in enumerate(events)
+                     if event['kind'] == 'fetch' and event['path'] == selected_path)
+    old_response = next(index for index, event in enumerate(events)
+                        if event['kind'] == 'response' and event['path'] == delayed_path)
+    assert new_fetch < old_response
+    assert output['state']['frame'] == '15m'
+    assert output['values']['coin-price']['text'] == '103.50'
+    assert output['values']['chart-fib-status']['text'] == '15m Fib · NO_SWING'
+    assert output['state']['live']['live']['active_fibonacci']['15m'] == selected['active_fibonacci']['15m']
+    assert '5m' not in output['state']['live']['live']['closed_candles']
+
+
+@pytest.mark.parametrize('frame', ['1m', '5m', '15m', '1h', '4h', '1D'])
+def test_public_native_latest_fib_extensions_and_pocket_remain_visible_after_rest_receipt(tmp_path, frame):
+    from test_cockpit_browser import public_native_fixtures, run_cockpit
+
+    _, routes = public_native_fixtures()
+    payload = routes[f'/api/market/assets/BTCUSDT?timeframe={frame}']
+    received = datetime.now(UTC).isoformat()
+    payload['market']['open_candles'] = {}
+    assert datetime.fromisoformat(payload['candles'][-1]['close_time']) < datetime.fromisoformat(received)
+    view = active_fib_fixture(frame, source_timestamp=received, evaluated_at=received,
+                              levels=[{'timeframe': frame, 'ratio': ratio, 'price': price}
+                                      for ratio, price in [(1.272, 400), (1.414, 600), (1.618, 1000)]],
+                              golden_pocket={'timeframe': frame, 'lower_price': 250, 'upper_price': 260})
+    payload['active_fibonacci'] = {frame: view}
+    output = run_cockpit(tmp_path, {'assets': [], 'watchlist': []}, {'feed_fresh': False},
+                         extra_routes=routes, required_token='fixture-private-access-code',
+                         actions=[{'type': 'frame', 'frame': frame}], capture_contract=True)
+    assert output['values']['chart-fib-status']['text'] == frame+' Fib · AVAILABLE'
+    chart = output['values']['chart']['html']
+    for ratio in [1.272, 1.414, 1.618]:
+        assert frame+' Fib '+str(ratio) in chart
+    assert 'Golden Pocket' in chart
+    assert output['state']['live']['live']['open_candles'] == {}

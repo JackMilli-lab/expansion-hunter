@@ -3,11 +3,18 @@ import os
 from datetime import date as utc_date
 from importlib.resources import files
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 
 def install_trade_alert_routes(app, authorize):
+    def public_market_enabled():
+        return os.getenv("COCKPIT_PUBLIC_MARKET_DATA", "false").strip().lower() in {"true", "1", "yes"}
+
+    async def market_read_access(authorization: str | None = Header(default=None)):
+        if not public_market_enabled():
+            await authorize(authorization)
+
     @app.get("/trade-alert", response_class=HTMLResponse)
     async def page():
         return files("expansion_hunter").joinpath("static/trade_alert.html").read_text()
@@ -71,6 +78,30 @@ def install_trade_alert_routes(app, authorize):
                 "analysis": analysis,
                 "analysis_status": "DERIVED" if analysis else "UNAVAILABLE",
                 "warning": "Conditional paths are hypotheses, not predicted future candles"}
+
+    @app.get("/api/market/status", dependencies=[Depends(market_read_access)])
+    async def market_status():
+        # Only current public exchange observations. Private archive, delivery,
+        # watchlist and account state remain behind the original authorization.
+        snapshot = await status()
+        visible = {key: snapshot[key] for key in
+                   ("status", "running", "as_of", "mode", "live_trading", "counts", "coverage", "connections")
+                   if key in snapshot}
+        asset_keys = ("symbol", "asset_id", "price", "received_at", "price_evidence", "tick_size",
+                      "history_counts", "data_quality", "status", "pre_ignition")
+        visible["assets"] = [{key: row[key] for key in asset_keys if key in row}
+                             for row in snapshot.get("assets", [])]
+        visible["public_market_data"] = public_market_enabled()
+        return visible
+
+    @app.get("/api/market/assets/{symbol}", dependencies=[Depends(market_read_access)])
+    async def market_asset(symbol: str, timeframe: str = "5m"):
+        # Reuse native rolling candles; this request never downloads histories.
+        snapshot = await asset(symbol, timeframe)
+        visible = {key: snapshot[key] for key in
+                   ("symbol", "as_of", "timeframe", "market", "candles", "analysis", "analysis_status", "warning")}
+        visible["public_market_data"] = public_market_enabled()
+        return visible
 
     @app.get("/api/trade-alert/history", dependencies=[Depends(authorize)])
     def history(limit: int = 100):

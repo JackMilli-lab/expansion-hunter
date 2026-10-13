@@ -29,6 +29,7 @@ def run_cockpit(
     # The state reader exists only in this executable test copy of the script.
     script = script.rsplit("})();", 1)[0] + """
 window.__readState=()=>({token:S.token,authNeeded:S.authNeeded,selected:S.selected,
+  publicMarket:S.publicMarket,authenticated:S.authenticated,
   frame:S.frame,assets:S.assets,native:S.native,live:S.live,chartBars:S.chartBars});
 })();
 """
@@ -54,7 +55,7 @@ function boot() {
   function element(id) {
     if (!elements.has(id)) {
       const item = {
-        textContent:'',innerHTML:'',className:'',dataset:{},style:{},open:false,
+        textContent:'',innerHTML:'',className:'',dataset:{},style:{},open:false,disabled:false,
         value:id==='discovery-filter'?'all':'',clientWidth:700,clientHeight:350,
         addEventListener(type, callback){handlers.set(id+':'+type,callback);},
         setAttribute(){},append(){},remove(){},focus(){},scrollIntoView(){},
@@ -92,7 +93,7 @@ function boot() {
       const call={path,method:options.method??'GET',headers:options.headers??{}};
       calls.push(call);events.push({kind:'fetch',...call});
       const fixture=routes[path],wrapped=fixture&&Object.hasOwn(fixture,'__status');
-      const authorized=!requiredToken||path.startsWith('/api/i18n/')||
+      const authorized=!requiredToken||path.startsWith('/api/i18n/')||path.startsWith('/api/market/')||
         call.headers.Authorization==='Bearer '+requiredToken;
       const status=!authorized?401:wrapped?fixture.__status:fixture===undefined?404:200;
       const payload=!authorized?{detail:'Unauthorized'}:wrapped?fixture.__body:
@@ -109,6 +110,7 @@ function readValues() {
   const values = {};
   for (const [id,item] of elements) values[id] = {
     text:item.textContent,html:item.innerHTML,classes:item.className,open:item.open,
+    disabled:item.disabled,
   };
   return values;
 }
@@ -345,6 +347,97 @@ def native_fixtures(*, stale=False, analysis=True):
     return status, routes
 
 
+def public_native_fixtures():
+    status, routes = native_fixtures()
+    public_status = {**status, 'public_market_data': True}
+    routes['/api/market/status'] = public_status
+    routes.update({path.replace('/api/trade-alert/assets/', '/api/market/assets/'): payload
+                   for path, payload in list(routes.items())
+                   if path.startswith('/api/trade-alert/assets/')})
+    return public_status, routes
+
+
+def test_public_market_viewer_shows_native_prices_and_all_six_chart_frames(tmp_path):
+    native, routes = public_native_fixtures()
+    frames = ['1m', '5m', '15m', '1h', '4h', '1D']
+    result = run_cockpit(
+        tmp_path, {'assets': [], 'watchlist': []}, {'feed_fresh': False},
+        extra_routes=routes, required_token='fixture-private-access-code',
+        actions=[{'type': 'frame', 'frame': frame} for frame in frames],
+        capture_contract=True,
+    )
+    initial = result['snapshots'][0]
+    assert initial['state']['token'] == ''
+    assert initial['state']['authenticated'] is False
+    assert initial['state']['publicMarket'] is True
+    assert initial['storage'] == {}
+    assert len(initial['state']['assets']) == 30
+    assert initial['state']['native']['assets'] == native['assets']
+    assert {row['exchange_symbol']: row['price'] for row in initial['state']['assets']} == {
+        row['symbol']: row['price'] for row in native['assets']
+    }
+    assert initial['state']['selected'] == 'BTCUSDT'
+    assert initial['values']['coin-price']['text'] == '100.50'
+    assert initial['values']['feed-label']['text'] == 'Public feed connected'
+    assert initial['values']['live-button']['disabled'] is True
+    assert 'Live monitoring' in initial['values']['live-button']['html']
+    assert '<rect' in initial['values']['chart']['html']
+    assert 'hidden' in initial['values']['chart-stale']['classes']
+    assert 'hidden' in initial['values']['system-error']['classes']
+    for frame, snapshot in zip(frames, result['snapshots'][1:], strict=True):
+        path = f'/api/market/assets/BTCUSDT?timeframe={frame}'
+        detail = routes[path]
+        assert any(call['path'] == path for call in snapshot['calls'])
+        assert snapshot['state']['frame'] == frame
+        assert snapshot['state']['live']['live']['closed_candles'][frame] == detail['candles']
+        assert snapshot['state']['chartBars'][0]['open_time'] == detail['candles'][0]['open_time']
+        assert snapshot['state']['live']['live']['price_source_timestamp'] == detail['market']['price_source_timestamp']
+        assert snapshot['state']['live']['live']['scores'] == detail['analysis']['scores']
+        assert snapshot['state']['live']['live']['war_room'] == detail['analysis']['war_room']
+    assert not any(call['path'].startswith(('/api/live/assets/', '/api/live/updates/',
+                                          '/api/trade-alert/assets/'))
+                   for call in result['calls'])
+    assert all(call['method'] == 'GET' for call in result['calls'])
+
+
+def test_public_market_status_cannot_validate_access_and_valid_code_restores_controls(tmp_path):
+    token = 'fixture-valid-private-access-code'
+    _, routes = public_native_fixtures()
+    result = run_cockpit(
+        tmp_path, {'assets': [], 'watchlist': []},
+        {'feed_fresh': False, 'runtime': {'running': False}},
+        extra_routes=routes, required_token=token,
+        actions=[{'type': 'access', 'token': 'wrong-code'}, {'type': 'access', 'token': token}],
+        capture_contract=True,
+    )
+    initial, wrong, connected = result['snapshots']
+    assert initial['state']['publicMarket'] is True
+    assert wrong['state']['token'] == ''
+    assert wrong['state']['authenticated'] is False
+    assert wrong['state']['publicMarket'] is True
+    assert wrong['storage'] == {}
+    assert wrong['values']['access-dialog']['open'] is True
+    assert 'Incorrect access code' in wrong['values']['access-error']['text']
+    assert wrong['values']['live-button']['disabled'] is True
+    wrong_calls = wrong['calls'][len(initial['calls']):]
+    assert wrong_calls == [{'path': '/api/trade-alert/status', 'method': 'GET',
+                            'headers': {'Accept': 'application/json',
+                                        'Authorization': 'Bearer wrong-code'}}]
+    assert not any(event['kind'] == 'save' for event in wrong['events'])
+    assert connected['state']['authenticated'] is True
+    assert connected['state']['token'] == token
+    assert connected['storage'] == {'expansion-hunter-access-token': token}
+    assert connected['values']['access-dialog']['open'] is False
+    assert connected['values']['live-button']['disabled'] is False
+    assert 'Start scanner' in connected['values']['live-button']['html']
+    connected_calls = connected['calls'][len(wrong['calls']):]
+    assert connected_calls[0]['path'] == '/api/trade-alert/status'
+    assert connected_calls[0]['headers']['Authorization'] == f'Bearer {token}'
+    assert any(call['path'] == '/api/cockpit/overview' for call in connected_calls)
+    assert all(call['headers'].get('Authorization') == f'Bearer {token}'
+               for call in connected_calls)
+
+
 def test_access_validates_code_before_saving_and_restores_tab_session(tmp_path):
     token = 'fixture-valid-access-code'
     result = run_cockpit(
@@ -422,6 +515,8 @@ def test_native_status_selects_btc_and_hydrates_without_legacy_overview(tmp_path
     assert values['coin-title']['text'] == 'BTCUSDT'
     assert values['coin-price']['text'] == '100.50'
     paths = [call['path'] for call in result['calls']]
+    assert paths.index('/api/market/status') < paths.index('/api/trade-alert/status')
+    assert state['publicMarket'] is False
     assert paths.index('/api/live/assets/BTCUSDT') < paths.index('/api/trade-alert/assets/BTCUSDT?timeframe=1m')
     assert state['live']['live']['native_source'] is True
     assert state['live']['live']['closed_candles']['1m'] == detail['candles']

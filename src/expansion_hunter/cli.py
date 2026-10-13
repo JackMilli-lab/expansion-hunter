@@ -386,6 +386,15 @@ def main():
 
                 path = Path(args.alert_config)
                 pre_ignition_config = TradeAlertSettings.model_validate_json(path.read_text()) if path.is_file() else TradeAlertSettings()
+            monitor_limit = os.getenv("COCKPIT_FAST_MONITOR_LIMIT")
+            if monitor_limit:
+                limit = int(monitor_limit)
+                if not 1 <= limit <= 500:
+                    raise ValueError("COCKPIT_FAST_MONITOR_LIMIT must be between 1 and 500")
+                for config in (alert_config, pre_ignition_config):
+                    if config is not None:
+                        config.max_assets = min(config.max_assets, limit)
+                        config.deep_watch_limit = min(config.deep_watch_limit, limit)
             uvicorn.run(
                 create_app(settings, trade_alert_settings=alert_config, pre_ignition_settings=pre_ignition_config),
                 host=args.host, port=args.port, log_level=args.log_level.lower(),

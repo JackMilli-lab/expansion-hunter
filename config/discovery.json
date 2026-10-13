@@ -1,0 +1,28 @@
+{
+  "universe_size": 500,
+  "ranking_mode": "BOTH",
+  "light_timeframe": "15m",
+  "light_history_bars": 128,
+  "deep_timeframes": ["1m", "5m", "15m", "1h", "4h", "1D"],
+  "deep_history_bars": 240,
+  "abnormal_limit": 250,
+  "deep_watchlist_size": 50,
+  "deep_per_cycle": 10,
+  "deep_weight_budget": 800,
+  "broad_interval_seconds": 300,
+  "poll_interval_seconds": 15,
+  "max_cycle_seconds": 240,
+  "minimum_history_samples": 20,
+  "minimum_cross_section": 10,
+  "minimum_score_coverage": 0.6,
+  "loaded_minimum_coverage": 0.75,
+  "intervals": {
+    "DORMANT": 900,
+    "RADAR": 600,
+    "WATCH": 300,
+    "PRE_IGNITION": 120,
+    "LOADED": 60,
+    "IGNITION": 30,
+    "INVALIDATED": 900
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "top_n": 5,
+  "timeframes": ["4h", "1D"],
+  "history_bars": 400,
+  "concurrency": 2,
+  "http_timeout": 10,
+  "http_retries": 1,
+  "binance_spot_url": "https://data-api.binance.vision",
+  "symbol_map_path": "config/symbols.json",
+  "db_path": "data/cockpit.sqlite3"
+}

@@ -1,0 +1,15 @@
+# Windows x64 / CPython 3.12 payload. Core versions match the tested application.
+numpy==2.3.5
+pandas==2.2.3
+pydantic==2.13.4
+httpx==0.28.1
+fastapi==0.141.1
+uvicorn==0.52.1
+websockets==16.0
+# Explicit Windows dependencies: cross-platform pip resolution evaluates host markers.
+pywebview>=6,<7
+pythonnet==3.0.5
+clr_loader>=0.2.7,<0.3
+cffi>=1.17,<3
+tzdata
+proxy_tools==0.1.0

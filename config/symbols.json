@@ -1,0 +1,10 @@
+{
+  "bitcoin": "BTCUSDT",
+  "ethereum": "ETHUSDT",
+  "binancecoin": "BNBUSDT",
+  "ripple": "XRPUSDT",
+  "quant-network": "QNTUSDT",
+  "zcash": "ZECUSDT",
+  "bittensor": "TAOUSDT",
+  "ondo-finance": "ONDOUSDT"
+}

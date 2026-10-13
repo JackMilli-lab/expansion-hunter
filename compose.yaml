@@ -1,0 +1,30 @@
+services:
+  cockpit:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      COCKPIT_API_TOKEN: ${COCKPIT_API_TOKEN:?Set a long dashboard access token}
+    volumes:
+      - cockpit-data:/app/data
+      - cockpit-reports:/app/reports
+    stop_grace_period: 30s
+  trade-alert:
+    profiles: [trade-alert]
+    build: .
+    command: [trade-alert, --host, 0.0.0.0, --port, "8000"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8500:8000"
+    environment:
+      COCKPIT_API_TOKEN: ${COCKPIT_API_TOKEN:?Set a long dashboard access token}
+      COCKPIT_TELEGRAM_BOT_TOKEN: ${COCKPIT_TELEGRAM_BOT_TOKEN:-}
+      COCKPIT_TELEGRAM_CHAT_ID: ${COCKPIT_TELEGRAM_CHAT_ID:-}
+    volumes:
+      - trade-alert-data:/app/data
+    stop_grace_period: 45s
+volumes:
+  trade-alert-data:
+  cockpit-data:
+  cockpit-reports:

@@ -1,0 +1,625 @@
+{
+  "$defs": {
+    "Asset": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
+        },
+        "exchange_symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exchange Symbol"
+        },
+        "quote_asset": {
+          "default": "USDT",
+          "title": "Quote Asset",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "symbol",
+        "name"
+      ],
+      "title": "Asset",
+      "type": "object"
+    },
+    "AssetSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "asset": {
+          "$ref": "#/$defs/Asset"
+        },
+        "as_of": {
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "candles": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/Candle"
+            },
+            "type": "array"
+          },
+          "title": "Candles",
+          "type": "object"
+        },
+        "market": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Metric"
+          },
+          "title": "Market",
+          "type": "object"
+        },
+        "derivatives": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Metric"
+          },
+          "title": "Derivatives",
+          "type": "object"
+        },
+        "catalysts": {
+          "items": {
+            "$ref": "#/$defs/Catalyst"
+          },
+          "title": "Catalysts",
+          "type": "array"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Issues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "asset",
+        "as_of"
+      ],
+      "title": "AssetSnapshot",
+      "type": "object"
+    },
+    "Candle": {
+      "additionalProperties": false,
+      "properties": {
+        "open_time": {
+          "format": "date-time",
+          "title": "Open Time",
+          "type": "string"
+        },
+        "close_time": {
+          "format": "date-time",
+          "title": "Close Time",
+          "type": "string"
+        },
+        "available_at": {
+          "format": "date-time",
+          "title": "Available At",
+          "type": "string"
+        },
+        "open": {
+          "exclusiveMinimum": 0,
+          "title": "Open",
+          "type": "number"
+        },
+        "high": {
+          "exclusiveMinimum": 0,
+          "title": "High",
+          "type": "number"
+        },
+        "low": {
+          "exclusiveMinimum": 0,
+          "title": "Low",
+          "type": "number"
+        },
+        "close": {
+          "exclusiveMinimum": 0,
+          "title": "Close",
+          "type": "number"
+        },
+        "volume": {
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        },
+        "quote_volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quote Volume"
+        },
+        "taker_buy_volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Taker Buy Volume"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "open_time",
+        "close_time",
+        "available_at",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "source"
+      ],
+      "title": "Candle",
+      "type": "object"
+    },
+    "Catalyst": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "network_usage",
+            "adoption",
+            "scarcity",
+            "institutional",
+            "rwa",
+            "inflows",
+            "infrastructure",
+            "partnership",
+            "marketing",
+            "social"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "available_at": {
+          "format": "date-time",
+          "title": "Available At",
+          "type": "string"
+        },
+        "verified": {
+          "default": false,
+          "title": "Verified",
+          "type": "boolean"
+        },
+        "quantitative": {
+          "default": false,
+          "title": "Quantitative",
+          "type": "boolean"
+        },
+        "strength": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Strength",
+          "type": "number"
+        }
+      },
+      "required": [
+        "category",
+        "description",
+        "source_url",
+        "observed_at",
+        "available_at"
+      ],
+      "title": "Catalyst",
+      "type": "object"
+    },
+    "Metric": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed At"
+        },
+        "available_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available At"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "unit": {
+          "default": "",
+          "title": "Unit",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/Status",
+          "default": "UNAVAILABLE"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "reliable": {
+          "default": true,
+          "title": "Reliable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "title": "Metric",
+      "type": "object"
+    },
+    "Regime": {
+      "enum": [
+        "RISK_ON",
+        "NEUTRAL",
+        "RISK_OFF",
+        "SHAKEOUT",
+        "BTC_EXPANSION",
+        "ALT_ROTATION",
+        "ALT_EXPANSION"
+      ],
+      "title": "Regime",
+      "type": "string"
+    },
+    "RegimeReport": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "As Of"
+        },
+        "available_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Available At"
+        },
+        "regime": {
+          "$ref": "#/$defs/Regime",
+          "default": "NEUTRAL"
+        },
+        "confidence": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "shakeout_score": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Shakeout Score",
+          "type": "number"
+        },
+        "risk_multiplier": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Risk Multiplier",
+          "type": "number"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Metrics",
+          "type": "object"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing",
+          "type": "array"
+        }
+      },
+      "title": "RegimeReport",
+      "type": "object"
+    },
+    "Status": {
+      "enum": [
+        "AVAILABLE",
+        "UNAVAILABLE",
+        "STALE",
+        "UNRELIABLE"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "StudyCase": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "as_of": {
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset_id",
+        "as_of"
+      ],
+      "title": "StudyCase",
+      "type": "object"
+    },
+    "StudyCohort": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "universe_asset_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "title": "Universe Asset Ids",
+          "type": "array"
+        },
+        "universe_available_at": {
+          "format": "date-time",
+          "title": "Universe Available At",
+          "type": "string"
+        },
+        "universe_source": {
+          "minLength": 1,
+          "title": "Universe Source",
+          "type": "string"
+        },
+        "point_in_time_universe": {
+          "title": "Point In Time Universe",
+          "type": "boolean"
+        },
+        "includes_delisted": {
+          "title": "Includes Delisted",
+          "type": "boolean"
+        },
+        "regime": {
+          "$ref": "#/$defs/RegimeReport"
+        },
+        "observations": {
+          "items": {
+            "$ref": "#/$defs/StudyObservation"
+          },
+          "minItems": 1,
+          "title": "Observations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "as_of",
+        "universe_asset_ids",
+        "universe_available_at",
+        "universe_source",
+        "point_in_time_universe",
+        "includes_delisted",
+        "regime",
+        "observations"
+      ],
+      "title": "StudyCohort",
+      "type": "object"
+    },
+    "StudyObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot": {
+          "$ref": "#/$defs/AssetSnapshot"
+        },
+        "pre_event_source": {
+          "minLength": 1,
+          "title": "Pre Event Source",
+          "type": "string"
+        },
+        "point_in_time_metadata": {
+          "title": "Point In Time Metadata",
+          "type": "boolean"
+        },
+        "future_bars": {
+          "items": {
+            "$ref": "#/$defs/Candle"
+          },
+          "title": "Future Bars",
+          "type": "array"
+        },
+        "future_timeframe": {
+          "default": "1D",
+          "enum": [
+            "1D",
+            "4h"
+          ],
+          "title": "Future Timeframe",
+          "type": "string"
+        },
+        "future_source": {
+          "minLength": 1,
+          "title": "Future Source",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Metric"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "snapshot",
+        "pre_event_source",
+        "point_in_time_metadata",
+        "future_source"
+      ],
+      "title": "StudyObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "cohorts": {
+      "items": {
+        "$ref": "#/$defs/StudyCohort"
+      },
+      "minItems": 1,
+      "title": "Cohorts",
+      "type": "array"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/StudyCase"
+      },
+      "title": "Cases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "cohorts"
+  ],
+  "title": "StudyDataset",
+  "type": "object"
+}

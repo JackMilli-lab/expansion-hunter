@@ -1,0 +1,19 @@
+# Blueprint only: creating this service requires a paid persistent-disk plan.
+# No service is deployed by including this file in the release archive.
+services:
+  - type: web
+    name: expansion-hunter
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements-runtime.txt && pip install --no-deps .
+    startCommand: python deploy/start-render.py
+    healthCheckPath: /health
+    disk:
+      name: expansion-hunter-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: COCKPIT_API_TOKEN
+        generateValue: true

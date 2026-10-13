@@ -1,0 +1,9 @@
+# Direct production dependency versions recorded in requirements-tested.txt.
+# Development and optional desktop packages are intentionally excluded.
+numpy==2.3.5
+pandas==2.2.3
+pydantic==2.13.4
+httpx==0.28.1
+fastapi==0.141.1
+uvicorn==0.52.1
+websockets==16.0

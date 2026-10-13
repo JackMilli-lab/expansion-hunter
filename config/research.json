@@ -1,0 +1,7 @@
+{
+  "controls_per_case": 50,
+  "horizon_days": 30,
+  "explosive_return": 0.5,
+  "acceptance_closes": 2,
+  "discover_cases": true
+}

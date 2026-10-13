@@ -1,0 +1,11 @@
+.venv
+.app-venv
+.tooling
+data
+reports
+dist
+build
+.git
+.env
+__pycache__
+*.pyc

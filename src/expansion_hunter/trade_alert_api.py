@@ -1,0 +1,94 @@
+"""Read-only Trade Alert dashboard/API. Test delivery requires explicit action."""
+import os
+from datetime import date as utc_date
+from importlib.resources import files
+
+from fastapi import Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
+
+
+def install_trade_alert_routes(app, authorize):
+    @app.get("/trade-alert", response_class=HTMLResponse)
+    async def page():
+        return files("expansion_hunter").joinpath("static/trade_alert.html").read_text()
+
+    @app.get("/api/trade-alert/status", dependencies=[Depends(authorize)])
+    async def status():
+        worker = getattr(app.state, "trade_alert_worker", None)
+        snapshot = worker.snapshot() if worker else {"status": "UNAVAILABLE", "running": False,
+            "reason": "Start the existing application with the trade-alert command", "assets": [], "counts": {}}
+        snapshot["research"] = getattr(app.state, "trade_alert_research_health", {"status": "UNAVAILABLE"})
+        snapshot["notifications"] = getattr(app.state, "notification_health", {"status": "UNAVAILABLE"})
+        snapshot["deep_analysis"] = getattr(app.state, "pre_move_deep_health", {"status": "UNAVAILABLE"})
+        return snapshot
+
+    @app.get("/api/trade-alert/pre-ignition", dependencies=[Depends(authorize)])
+    async def pre_ignition():
+        """Publish already evaluated rows; never run historical analysis here."""
+        worker = getattr(app.state, "trade_alert_worker", None)
+        snapshot = worker.snapshot() if worker else {}
+        return {"status": snapshot.get("status", "UNAVAILABLE"),
+                "running": snapshot.get("running", False),
+                "as_of": snapshot.get("as_of"),
+                "coverage": snapshot.get("coverage", {}),
+                "counts": snapshot.get("counts", {}),
+                "rows": snapshot.get("pre_ignition", []),
+                "calibration": "UNVALIDATED_RESEARCH_SCORE",
+                "warning": "Scores are not probabilities. Actual eventual move consumed is unknown live."}
+
+    @app.get("/api/trade-alert/early-detection", dependencies=[Depends(authorize)])
+    def early_detection(date: str | None = None):
+        """Only read the research worker's cached report, outside ingestion."""
+        if date is not None:
+            try:
+                if utc_date.fromisoformat(date).isoformat() != date:
+                    raise ValueError("Use YYYY-MM-DD")
+            except ValueError as exc:
+                raise HTTPException(422, "date must be a valid UTC YYYY-MM-DD") from exc
+        from .pre_ignition_research import cached_daily_report
+
+        return cached_daily_report(app.state.store, date=date)
+
+    @app.get("/api/trade-alert/assets/{symbol}", dependencies=[Depends(authorize)])
+    async def asset(symbol: str, timeframe: str = "5m"):
+        from .models import utcnow
+        from .trade_alert_runtime import FRAMES
+
+        worker = getattr(app.state, "trade_alert_worker", None)
+        if timeframe not in FRAMES:
+            raise HTTPException(422, "Unsupported timeframe")
+        symbol = symbol.upper()
+        if worker is None or symbol not in worker.assets:
+            raise HTTPException(404, "Not a currently covered native market")
+        now = utcnow()
+        analysis = getattr(app.state, "pre_move_analysis", {}).get(symbol)
+        return {"symbol": symbol, "as_of": now.isoformat(), "timeframe": timeframe,
+                "market": worker._state(symbol).snapshot(symbol, now, include_history=False),
+                "candles": [bar.model_dump(mode="json") for bar in worker._history(symbol, timeframe, now)],
+                "pre_move": [row for row in worker.snapshot().get("pre_move", []) if row["symbol"] == symbol],
+                "pre_ignition": [row for row in worker.snapshot().get("pre_ignition", [])
+                                 if row["symbol"] == symbol],
+                "analysis": analysis,
+                "analysis_status": "DERIVED" if analysis else "UNAVAILABLE",
+                "warning": "Conditional paths are hypotheses, not predicted future candles"}
+
+    @app.get("/api/trade-alert/history", dependencies=[Depends(authorize)])
+    def history(limit: int = 100):
+        if not 1 <= limit <= 1000:
+            raise HTTPException(422, "limit must be between 1 and 1000")
+        return {"alerts": app.state.store.objects("trade_alert", limit=limit),
+                "outcomes": app.state.store.objects("trade_alert_outcome", limit=limit),
+                "misses": app.state.store.objects("trade_alert_miss", limit=limit),
+                "scope": "Immutable observations; future outcomes are separate research-only objects"}
+
+    @app.post("/api/trade-alert/telegram/test", dependencies=[Depends(authorize)])
+    async def test_telegram(request: Request):
+        if not os.getenv("COCKPIT_API_TOKEN") and request.client and request.client.host not in {
+            "127.0.0.1", "localhost", "::1", "testclient"}:
+            raise HTTPException(403, "Configure remote dashboard authentication first")
+        import httpx
+
+        from .notification_runtime import TelegramSettings, send_telegram_test
+        settings = TelegramSettings.from_env()
+        async with httpx.AsyncClient(timeout=settings.timeout_seconds) as client:
+            return await send_telegram_test(client, settings)

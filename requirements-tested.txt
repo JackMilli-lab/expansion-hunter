@@ -1,0 +1,12 @@
+# Direct versions used for this validation; install pyproject.toml for normal dependency resolution.
+numpy==2.3.5
+pandas==2.2.3
+pydantic==2.13.4
+httpx==0.28.1
+fastapi==0.141.1
+uvicorn==0.52.1
+setuptools==84.0.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.10
+websockets==16.0

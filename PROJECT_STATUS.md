@@ -4,6 +4,14 @@ Updated 2026-10-06. This replaces the earlier status claims; the original audit 
 
 The existing application is being extended in place. **Exchange order execution remains absent.** Production uses actual public observations; fixtures belong only to tests/replay. Missing data is explicitly unavailable, and scores are uncalibrated evidence summaries.
 
+## Frontend delivery — 2026-10-14
+
+The frontend now includes a Lightweight Charts 4.2.3 adapter, local manual/locked Fibonacci drawings, tick-rounded decimal geometry, an actual-data candidate sheet, local watchlist mute/swipe actions, alert filters, Pro columns, desktop proportions, and an offline interface shell. Scanner logic and score weights are unchanged. CDN failure retains the existing SVG chart.
+
+Targeted frontend contracts pass; four Chromium flow tests are skipped because this executor denies a browser socket operation. Pixel layout, Android installation and current live provider responses are not claimed verified. The newer per-timeframe ATR-zigzag/reversal rules have not replaced the existing fractal-confirmed ATR-impulse implementation.
+
+The deployed Free configuration is limited to 30 native monitored markets, deep analysis disabled, research disabled, and ephemeral SQLite. The earlier 500-pair selection smoke below is historical evidence, not present 500-market coverage or 24/7 certification. No private exchange keys or order execution were added.
+
 ## Current verification boundary
 
 The starting source checkpoint had **860 passing tests**. The latest complete run before the final reliability fixes had **1,700 passing and one failing test**. That failure expected a LONG Stored Energy value without providing a known direction; the fixture now provides explicit LONG context, and a separate UNKNOWN regression requires unavailable directional values. Its targeted runtime/API suite passed **32 tests**. The final aggregate check is pending and will replace this paragraph with its actual result.

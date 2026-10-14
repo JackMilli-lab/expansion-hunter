@@ -10,7 +10,7 @@ from importlib.resources import files
 from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import Field
 
 from .intelligence import context_at, load_macro
@@ -316,6 +316,25 @@ def install_routes(app, authorize):
             return files("expansion_hunter").joinpath("static/trade_alert.html").read_text()
         # HTML contains no data or secrets. Data requests use the existing bearer guard.
         return files("expansion_hunter").joinpath("static/cockpit.html").read_text()
+
+    @app.get("/cockpit-assets/{asset_name}")
+    async def cockpit_asset(asset_name: str):
+        # Only public interface assets; no API observations or private files.
+        assets = {
+            "chart-engine.js": ("chart_engine.js", "application/javascript"),
+            "candidate-ui.js": ("candidate_ui.js", "application/javascript"),
+            "manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+            "sw.js": ("sw.js", "application/javascript"),
+            "icon.svg": ("icon.svg", "image/svg+xml"),
+        }
+        if asset_name not in assets:
+            raise HTTPException(404, "Interface asset unavailable")
+        name, media_type = assets[asset_name]
+        headers = {"Cache-Control": "no-cache"}
+        if asset_name == "sw.js":
+            headers["Service-Worker-Allowed"] = "/"
+        return Response(files("expansion_hunter").joinpath("static", name).read_bytes(),
+                        media_type=media_type, headers=headers)
 
     @app.get("/", response_class=HTMLResponse)
     async def home():

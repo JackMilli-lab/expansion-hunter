@@ -1,0 +1,12 @@
+{
+  "id": "/cockpit",
+  "name": "Expansion Hunter — Quant Trading War Room",
+  "short_name": "Expansion Hunter",
+  "start_url": "/cockpit",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0B0D12",
+  "theme_color": "#0B0D12",
+  "lang": "en",
+  "icons": [{"src": "/cockpit-assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]
+}

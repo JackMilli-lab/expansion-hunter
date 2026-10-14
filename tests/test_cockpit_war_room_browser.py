@@ -20,7 +20,7 @@ NODE = shutil.which("node")
 pytestmark = pytest.mark.skipif(NODE is None, reason="Node required for executable frontend tests")
 
 
-def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None, action="", inputs=None, universe=None, universe_next=None, stream=False, updates=None, hydrated_live=None, extra_routes=None, history_pages=None):
+def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None, action="", inputs=None, universe=None, universe_next=None, stream=False, updates=None, hydrated_live=None, extra_routes=None, history_pages=None, initial_frame='1m'):
     now = datetime.now(UTC).isoformat()
     routes = {
         "/api/i18n/en": json.loads(CATALOG.read_text()),
@@ -45,6 +45,9 @@ def run_ui(tmp_path, *, overview=None, live=None, positions=None, analytics=None
         routes['/api/live/universe'] = universe
     routes.update(extra_routes or {})
     script = HTML.read_text().split("<script>", 1)[1].split("</script>", 1)[0]
+    if initial_frame is not None:
+        script = script.replace('renderSetup();refreshTranslations();refreshOverview();',
+                                'S.frame='+json.dumps(initial_frame)+';renderSetup();refreshTranslations();refreshOverview();', 1)
     # Test-only read access to the real closed-over cache, never exposed in production.
     script = script.replace("window.addEventListener('eh-desktop-session'",
                             "window.__readLiveCache=()=>S.live;\n"
@@ -1140,7 +1143,7 @@ def test_public_native_fib_payload_overrides_shared_analysis_and_caches_each_sel
                          extra_routes=routes, required_token='fixture-private-access-code',
                          actions=[{'type': 'frame', 'frame': frame} for frame in ['1m', '5m', '1m']],
                          capture_contract=True)
-    for frame, snapshot in zip(['1m', '1m', '5m', '1m'], output['snapshots'], strict=True):
+    for frame, snapshot in zip(['5m', '1m', '5m', '1m'], output['snapshots'], strict=True):
         assert snapshot['values']['chart-fib-status']['text'] == frame+' Fib · '+views[frame]['status']
         assert snapshot['state']['live']['live']['active_fibonacci'][frame] == views[frame]
     cache = output['state']['live']['live']['active_fibonacci']
@@ -1195,7 +1198,7 @@ def test_history_cap_keeps_a_continuous_older_archive_until_reset_returns_to_liv
     else:
         assert archive == older[:10000]
         assert all(datetime.fromisoformat(right['open_time'])-datetime.fromisoformat(left['open_time']) == timedelta(minutes=1)
-                   for left, right in zip(archive, archive[1:]))
+                   for left, right in zip(archive[:-1], archive[1:], strict=True))
         assert delta['live']['closed_candles']['1m'][-1] not in archive
         assert output['values']['chart']['dataset']['lastTimestamp'] <= archive[-1]['open_time']
 
@@ -1268,3 +1271,141 @@ def test_public_native_latest_fib_extensions_and_pocket_remain_visible_after_res
         assert frame+' Fib '+str(ratio) in chart
     assert 'Golden Pocket' in chart
     assert output['state']['live']['live']['open_candles'] == {}
+
+
+def design_native_snapshot(*, stale=False, missing_price=False):
+    """Synthetic measured quotes and connections for the UI health contract."""
+    from datetime import timedelta
+
+    now = datetime.now(UTC)
+    received = (now-timedelta(minutes=2) if stale else now-timedelta(seconds=2)).isoformat()
+    rows = [{'asset_id': 'synthetic-'+symbol, 'symbol': symbol,
+             'price': None if missing_price else price, 'received_at': received,
+             'price_evidence': {'type': 'NATIVE_TRADE', 'source': 'TEST_FIXTURE',
+                                'exchange_timestamp': received},
+             'data_quality': {'1m': 'STALE' if stale else 'AVAILABLE'}}
+            for symbol, price in [('BTCUSDT', 100), ('ADAUSDT', 1)]]
+    return {'as_of': now.isoformat(), 'running': True, 'assets': rows,
+            'connections': [{'connection': 'CONNECTED', 'stale': False,
+                             'provider': 'TEST_FIXTURE', 'last_message_timestamp': now.isoformat()}]}
+
+
+def test_design_health_bar_live_requires_fresh_connection_and_measured_prices(tmp_path):
+    snapshot = design_native_snapshot()
+    output = run_ui(tmp_path, extra_routes={'/api/market/status': snapshot})
+    assert output['values']['feed-banner']['dataset']['status'] == 'LIVE'
+    assert output['values']['feed-label']['text'] == 'LIVE'
+    detail = output['values']['feed-detail']['text']
+    assert '2/500' in detail and 'WS' in detail and 's' in detail
+    assert output['values']['coin-price']['dataset']['status'] == 'AVAILABLE'
+
+
+def test_design_health_bar_old_quotes_are_stale_even_with_a_fresh_connected_socket(tmp_path):
+    snapshot = design_native_snapshot(stale=True)
+    received = snapshot['assets'][0]['received_at']
+    live = {'status': 'STALE', 'live': {'price': 100, 'price_quality': 'STALE',
+            'price_source_timestamp': received, 'price_received_timestamp': received,
+            'received_timestamp': received, 'closed_candles': {}, 'open_candles': {}}, 'fast': []}
+    overview = {'assets': [{'asset_id': 'synthetic-BTCUSDT', 'exchange_symbol': 'BTCUSDT',
+                           'price': 100, 'live_status': 'STALE', 'price_as_of': received}], 'watchlist': []}
+    output = run_ui(tmp_path, overview=overview, live=live,
+                    extra_routes={'/api/market/status': snapshot})
+    assert output['values']['feed-banner']['dataset']['status'] == 'STALE'
+    assert output['values']['feed-label']['text'] == 'STALE'
+    assert 'LIVE' not in output['values']['feed-detail']['text']
+    assert output['values']['coin-price']['dataset']['status'] == 'STALE'
+    assert 'Snapshot' in output['values']['coin-age']['text']
+
+
+def test_design_health_bar_fresh_socket_without_observed_prices_never_claims_live(tmp_path):
+    snapshot = design_native_snapshot(missing_price=True)
+    overview = {'assets': [{'asset_id': 'synthetic-BTCUSDT', 'exchange_symbol': 'BTCUSDT',
+                           'price': None, 'live_status': 'UNAVAILABLE'}], 'watchlist': []}
+    live = {'status': 'UNAVAILABLE', 'live': {'price': None, 'price_quality': 'UNAVAILABLE',
+            'received_timestamp': snapshot['as_of'], 'closed_candles': {}, 'open_candles': {}}, 'fast': []}
+    output = run_ui(tmp_path, overview=overview, live=live,
+                    extra_routes={'/api/market/status': snapshot})
+    assert output['values']['feed-banner']['dataset']['status'] != 'LIVE'
+    assert output['values']['feed-label']['text'] != 'LIVE'
+    assert output['values']['coin-price']['text'] == '—'
+    assert output['values']['coin-price']['dataset']['status'] == 'UNAVAILABLE'
+
+
+def test_design_ready_opportunities_are_symmetric_early_ranked_and_honest_about_estimates(tmp_path):
+    import re
+    from datetime import timedelta
+
+    snapshot = design_native_snapshot()
+    now = datetime.now(UTC)
+    rows = []
+    for side in ['LONG', 'SHORT']:
+        for index in range(6):
+            symbol = side+str(index)+'USDT'
+            received = now.isoformat()
+            candidate = {'symbol': symbol, 'status': 'AVAILABLE', 'state': 'READY', 'bias': side,
+                         'observation_timestamp': received, 'as_of': received, 'score': 70+index,
+                         'early_detection_priority': 10+index, 'score_velocity': 2,
+                         'move_consumed_pct': None, 'move_consumed_estimate_pct': 7.5,
+                         'move_consumed_estimate_source': 'CAUSAL_PRIOR_COMPLETED_WINDOW',
+                         'move_consumed_estimate_sample_count': 20,
+                         'reasons': ['Synthetic received pressure evidence']}
+            rows.append({'asset_id': 'synthetic-'+symbol, 'symbol': symbol, 'price': 100,
+                         'price_change_pct': 100-index, 'received_at': received,
+                         'price_evidence': {'type': 'NATIVE_TRADE', 'source': 'TEST_FIXTURE',
+                                            'exchange_timestamp': received},
+                         'data_quality': {'1m': 'AVAILABLE'}, 'pre_ignition': {side: candidate}})
+        old = (now-timedelta(minutes=2)).isoformat()
+        stale = {**rows[-1], 'asset_id': 'synthetic-'+side+'STALE', 'symbol': side+'STALEUSDT',
+                 'received_at': old, 'price_evidence': {'exchange_timestamp': old},
+                 'pre_ignition': {side: {**rows[-1]['pre_ignition'][side], 'symbol': side+'STALEUSDT',
+                                         'observation_timestamp': old, 'as_of': old,
+                                         'early_detection_priority': 999}}}
+        rows.append(stale)
+    snapshot['assets'] = rows
+    output = run_ui(tmp_path, extra_routes={'/api/market/status': snapshot})
+    counts = []
+    for side, element in [('LONG', 'best-long'), ('SHORT', 'best-short')]:
+        cards = output['values'][element]['html']
+        symbols = list(dict.fromkeys(re.findall(r'data-symbol="([^"]+)"', cards)))
+        assert 3 <= len(symbols) <= 5
+        assert symbols == [side+str(index)+'USDT' for index in range(5, 5-len(symbols), -1)]
+        assert side in cards and 'READY' in cards
+        assert side+'STALEUSDT' not in cards
+        assert 'UNAVAILABLE' in cards and 'Estimate' in cards
+        assert 'A+' not in cards and 'grade' not in cards.lower()
+        counts.append(len(symbols))
+    assert counts[0] == counts[1]
+
+
+def test_design_production_default_chart_timeframe_is_five_minutes(tmp_path):
+    from datetime import timedelta
+
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    bar = {'open_time': (now-timedelta(minutes=5)).isoformat(), 'close_time': now.isoformat(),
+           'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 10, 'timeframe': '5m'}
+    live = {'status': 'AVAILABLE', 'live': {'price': 100.5, 'received_timestamp': now.isoformat(),
+            'closed_candles': {'5m': [bar]}, 'open_candles': {}}, 'fast': []}
+    output = run_ui(tmp_path, live=live, initial_frame=None)
+    chart = output['values']['chart']['dataset']
+    assert chart['timeframe'] == '5m' and chart['visibleCount'] == '1'
+    assert chart['firstTimestamp'] == bar['open_time']
+
+
+def test_design_dynamic_watchlist_contains_received_ready_candidates_without_private_controls(tmp_path):
+    snapshot = design_native_snapshot()
+    row = snapshot['assets'][0]
+    row['pre_ignition'] = {'LONG': {'symbol': row['symbol'], 'status': 'AVAILABLE',
+                                  'state': 'READY', 'bias': 'LONG', 'as_of': row['received_at'],
+                                  'early_detection_priority': 80}}
+    fresh = run_ui(tmp_path, extra_routes={'/api/market/status': snapshot})
+    cards = fresh['values']['watchlist-items']['html']
+    assert 'data-symbol="BTCUSDT"' in cards and 'READY' in cards and 'Dynamic' in cards
+    assert 'data-pin=' not in cards and 'data-remove=' not in cards
+    assert 'Score UNAVAILABLE' in cards
+
+    stale_snapshot = design_native_snapshot(stale=True)
+    stale_row = stale_snapshot['assets'][0]
+    stale_row['pre_ignition'] = {'LONG': {**row['pre_ignition']['LONG'], 'as_of': stale_row['received_at']}}
+    stale = run_ui(tmp_path, extra_routes={'/api/market/status': stale_snapshot})
+    assert 'Dynamic' not in stale['values']['watchlist-items']['html']
+    assert 'data-symbol="BTCUSDT"' not in stale['values']['watchlist-items']['html']
